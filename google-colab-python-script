@@ -1,0 +1,81 @@
+import requests
+import pandas as pd
+import time
+from google.colab import files
+
+# --- CONFIG ---
+API_KEY = "your_etherscan_v2_api"
+CONTRACT_ADDRESS = "0x_the_arbitrum_sepolia_contract_address"
+BASE_URL = "https://api.etherscan.io/v2/api"
+CHAIN_ID = "421614"
+
+# YOUR SPECIFIED BLOCK RANGE 
+START_BLOCK = 80146723
+END_BLOCK = 112392502 
+
+all_txs = []
+current_start = START_BLOCK
+
+print(f"🚀 Full Audit Started: Extracting all transactions...")
+
+# PAGINATION LOOP: This ensures we get 100% of the transactions in your range
+while True:
+    params = {
+        "chainid": CHAIN_ID,
+        "module": "account",
+        "action": "txlist",
+        "address": CONTRACT_ADDRESS,
+        "startblock": current_start,
+        "endblock": END_BLOCK,
+        "page": 1,
+        "offset": 10000, # Getting max records per call
+        "sort": "asc",
+        "apikey": API_KEY
+    }
+    
+    try:
+        response = requests.get(BASE_URL, params=params, timeout=30).json()
+        
+        # Status '0' with "No transactions found" means we are done
+        if response.get("status") != "1":
+            print(f"\n✅ Audit Extraction Complete!")
+            break
+            
+        batch = response.get("result", [])
+        if not batch: break
+            
+        all_txs.extend(batch)
+        last_block = int(batch[-1]['blockNumber'])
+        
+        print(f"📥 Progress: {len(all_txs)} transactions collected... (Block: {last_block})", end="\r")
+
+        # Update start block to the next block to get the next page
+        current_start = last_block + 1
+        time.sleep(0.3) # API Rate Limit protection
+        
+    except Exception as e:
+        print(f"\n❌ Error during loop: {e}")
+        break
+
+# --- PROCESSING & DOWNLOADING ---
+if all_txs:
+    df = pd.DataFrame(all_txs)
+    
+    df['date'] = pd.to_datetime(df['timeStamp'].astype(int), unit='s')
+    df['month'] = df['date'].dt.to_period('M')
+    
+    monthly_stats = df.groupby('month')['from'].nunique()
+    
+    print("\n\n--- 📊 2024 GROWTH AUDIT ---")
+    print(monthly_stats)
+    print(f"\nTOTAL UNIQUE WALLETS IN PERIOD: {df['from'].nunique()}")
+
+    # Save to CSV
+    file_name = "testnet_full_audit.csv"
+    df.to_csv(file_name, index=False)
+    
+    # Trigger Download
+    print(f"\n💾 Downloading final file: {file_name}")
+    files.download(file_name)
+else:
+    print("\n❌ No data found in the specified block range.")
